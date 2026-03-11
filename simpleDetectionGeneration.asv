@@ -13,14 +13,6 @@ scantime = 2*cpi*nscans; % Estimate for "true" hardware scantime
 boundingBox = [0 30;-5 5];
 maxRange = sqrt(boundingBox(1,2)^2+boundingBox(2,2)^2);
 
-% Leverage visualization function
-display = HelperTIRadarTrackingDisplay('XLimits',[0 15],...
-    'YLimits',[-8 8],...
-    'MaxRange',25,...
-    'CameraReferenceLines',zeros(2,0),...
-    'RadarReferenceLines',zeros(2,0),...
-    'PlotReferenceImage',0); % Turn off ref image
-display(objectTrack.empty(0,1), {}, objectTrack.empty(0,1));
 
 % Define targets walking around in our bounding box
 walkingSpeed = 2;
@@ -55,13 +47,24 @@ rdg = radarDataGenerator(1,UpdateRate=scantime,ScanMode="No scanning",...
 % xlabel(ax,'X (m)');
 % ylabel(ax,'Y (m)');
 % title(ax,'Target Location');
-% targetpoints = cell(1,ntargets);
+%targetpoints = cell(1,ntargets);
 % for i = 1:ntargets
-%     targetinitpos = targets{i}.InitialPosition;
-%     targetpoints{i} = scatter(ax,targetinitpos(1),targetinitpos(2),"filled",DisplayName=['Target ',num2str(i)]);
+%     targetinitpos(i) = targets{i}.InitialPosition;
+%     %targetpoints{i} = scatter(ax,targetinitpos(1),targetinitpos(2),"filled",DisplayName=['Target ',num2str(i)]);
 % end
 % detscatter = scatter(ax,nan,nan,DisplayName='Detections');
 % legend(ax,Location="southoutside");
+
+truthPos0 = cell2mat(cellfun(@(p) p.InitialPosition(:), targets, 'UniformOutput', false));
+refDet = objectDetection.empty();
+% Leverage visualization function
+display = HelperTIRadarTrackingDisplay('XLimits',[0 15],...
+    'YLimits',[-8 8],...
+    'MaxRange',25,...
+    'CameraReferenceLines',zeros(2,0),...
+    'RadarReferenceLines',zeros(2,0),...
+    'PlotReferenceImage',0); % Turn off ref image
+display(refDet,objectTrack.empty(0,1),truthPos0);
 
 % Setup Tracker
 tracker = trackerJPDA(TrackLogic="Integrated");
@@ -104,7 +107,7 @@ tracker.ConfirmationThreshold = 0.95;
 tracker.DeletionThreshold = 1e-4;
 tracks = objectTrack.empty(0,1);
 
-% Create detections with measurement error
+%% Create detections with measurement error
 t = 0;
 for i = 1:100 %1000
     % Update targets
@@ -115,10 +118,10 @@ for i = 1:100 %1000
         ctarget = targets{itarget};
         cvel = vels{itarget};
         cpos = ctarget(scantime,cvel);
-
+        
         % Plot
-        ctargetplot = targetpoints{itarget};
-        plotTarget(ctargetplot,cpos);
+        %ctargetplot = targetpoints{itarget};
+        %plotTarget(ctargetplot,cpos);
 
         % Update target input
         targetin(itarget) = struct('PlatformID',itarget, ...
@@ -130,6 +133,7 @@ for i = 1:100 %1000
             vels{itarget} = newVelocity(cpos,boundingBox,walkingSpeed);
         end
     end
+    
 
     % Get detections
     [dets,numDets,config] = rdg(targetin,t);
@@ -143,8 +147,11 @@ for i = 1:100 %1000
     end
 
     % Update detections
-    plotDets(detscatter,dets);
-    drawnow;
+    %plotDets(detscatter,dets);
+    %drawnow;
+
+    % Update display
+    display(dets, tracks,targetin); % clusteredDets,   refImage
 
     t = t + scantime;
 end

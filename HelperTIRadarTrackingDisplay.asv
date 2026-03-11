@@ -1,7 +1,7 @@
 classdef HelperTIRadarTrackingDisplay < matlab.System
     properties (Nontunable)
-        XLimits = [0 40];%[0 25]; % Match Limits for truth
-        YLimits = [-10 10];%[-15 15];
+        XLimits = [0 25];
+        YLimits = [-15 15];
         ZLimits = [-0.25 0.25];
         FieldOfView = [120 0];
         MaxRange = 25;
@@ -68,13 +68,13 @@ classdef HelperTIRadarTrackingDisplay < matlab.System
             clrs = lines(7);
 
             % Create detection plotter
-            dp = detectionPlotter(tp,'DisplayName','Detections','MarkerFaceColor',clrs(3,:),'MarkerEdgeColor',clrs(3,:));
+            dp = detectionPlotter(tp,'DisplayName','Point Cloud','MarkerFaceColor',clrs(3,:),'MarkerEdgeColor',clrs(3,:));
 
             % Create cluster plotter
             %dcp = detectionPlotter(tp,'DisplayName','Centroid Estimate','MarkerFaceColor',clrs(2,:),'MarkerEdgeColor',clrs(2,:));
             
             % Create Truth Plotter
-            dcp = detectionPlotter(tp,'DisplayName','Truths','MarkerFaceColor',clrs(2,:),'MarkerEdgeColor',clrs(2,:));
+            dcp = detectionPlotter(tp,'DisplayName','Truth Pos','MarkerFaceColor',clrs(2,:),'MarkerEdgeColor',clrs(2,:));
 
             % Create track plotter
             trkP = trackPlotter(tp,'DisplayName','Tracks','MarkerFaceColor',clrs(1,:),'MarkerEdgeColor',clrs(1,:),'ColorizeHistory','off','ConnectHistory','off','HistoryDepth',30,'FontSize',20);
@@ -131,9 +131,13 @@ classdef HelperTIRadarTrackingDisplay < matlab.System
             % setEdgeAlpha(obj.ClusteredDetectionPlotter);
 
             % Plot Truth Locations
-            pos = vertcat(truthPos(:).Position);
-            vel = vertcat(truthPos(:).Velocity);
-            obj.truthPlotter.plotDetection(pos,vel) % Consider adding velocities
+            % for i = 1:numel(truthPos)
+            %     [pos(:,i),vel(:,i)] = truthPos(i); % TODO: index/
+            %     reformat
+            % end
+            %obj.ClusteredDetectionPlotter.plotDetection(pos',vel',posCov);
+            %setEdgeAlpha(obj.ClusteredDetectionPlotter);
+            obj.truthPlotter.plotDetection(truthPos')
 
             % Plot tracks
             [pos, posCov] = getTrackPositions(tracks,obj.MotionModel);

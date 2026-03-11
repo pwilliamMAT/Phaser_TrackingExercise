@@ -13,14 +13,6 @@ scantime = 2*cpi*nscans; % Estimate for "true" hardware scantime
 boundingBox = [0 30;-5 5];
 maxRange = sqrt(boundingBox(1,2)^2+boundingBox(2,2)^2);
 
-% Leverage visualization function
-display = HelperTIRadarTrackingDisplay('XLimits',[0 15],...
-    'YLimits',[-8 8],...
-    'MaxRange',25,...
-    'CameraReferenceLines',zeros(2,0),...
-    'RadarReferenceLines',zeros(2,0),...
-    'PlotReferenceImage',0); % Turn off ref image
-display(objectTrack.empty(0,1), {}, objectTrack.empty(0,1));
 
 % Define targets walking around in our bounding box
 walkingSpeed = 2;
@@ -40,28 +32,36 @@ far = 1e-4;
 rmax = sqrt(boundingBox(1,2)^2+boundingBox(2,2)^2);
 rres = bw2rangeres(bw);
 rrateres = dop2speed(prf/npulse,freq2wavelen(fc));
-rdg = radarDataGenerator(1,UpdateRate=scantime,ScanMode="No scanning",...
+rdg = radarDataGenerator(1,UpdateRate=1/scantime,ScanMode="No scanning",...
     FieldOfView=[180 5],RangeLimits=[0 rmax],...
     AzimuthResolution=azres,AzimuthBiasFraction=azbias,...
     RangeResolution=bw2rangeres(bw),...
     DetectionCoordinates="Sensor spherical",FalseAlarmRate=far,...
     CenterFrequency=fc,Bandwidth=bw,HasRangeRate=true);
 
-% Create an axes for plotting target and detection location
-ax = axes(figure);
-hold(ax,"on");
-xlim(ax,[boundingBox(1,1) boundingBox(1,2)]);
-ylim(ax,[boundingBox(2,1) boundingBox(2,2)]);
-xlabel(ax,'X (m)');
-ylabel(ax,'Y (m)');
-title(ax,'Target Location');
-targetpoints = cell(1,ntargets);
-for i = 1:ntargets
-    targetinitpos = targets{i}.InitialPosition;
-    targetpoints{i} = scatter(ax,targetinitpos(1),targetinitpos(2),"filled",DisplayName=['Target ',num2str(i)]);
+% Get Initial Position for Plot Initialization
+for itarget = 1:ntargets
+        % Get position and velocity
+        ctarget = targets{itarget};
+        cvel = vels{itarget};
+        cpos = ctarget(scantime,cvel);
+
+        % Update target input
+        targetin(itarget) = struct('PlatformID',itarget, ...
+                                   'Position',cpos', ...
+                                   'Velocity',cvel');
 end
-detscatter = scatter(ax,nan,nan,DisplayName='Detections');
-legend(ax,Location="southoutside");
+% Reference Det for Plot Initialization
+refDet = objectDetection.empty();
+
+% Leverage visualization helper function
+display = HelperTIRadarTrackingDisplay('XLimits',[-10 40],...
+    'YLimits',[-10 10],...
+    'MaxRange',30,...
+    'CameraReferenceLines',zeros(2,0),...
+    'RadarReferenceLines',zeros(2,0),...
+    'PlotReferenceImage',0); % Turn off ref image
+display(refDet,objectTrack.empty(0,1),targetin);
 
 % Setup Tracker
 tracker = trackerJPDA(TrackLogic="Integrated");
@@ -104,7 +104,7 @@ tracker.ConfirmationThreshold = 0.95;
 tracker.DeletionThreshold = 1e-4;
 tracks = objectTrack.empty(0,1);
 
-% Create detections with measurement error
+%% Create detections with measurement error
 t = 0;
 for i = 1:100 %1000
     % Update targets
@@ -115,10 +115,10 @@ for i = 1:100 %1000
         ctarget = targets{itarget};
         cvel = vels{itarget};
         cpos = ctarget(scantime,cvel);
-
+        
         % Plot
-        ctargetplot = targetpoints{itarget};
-        plotTarget(ctargetplot,cpos);
+        %ctargetplot = targetpoints{itarget};
+        %plotTarget(ctargetplot,cpos);
 
         % Update target input
         targetin(itarget) = struct('PlatformID',itarget, ...
@@ -130,9 +130,11 @@ for i = 1:100 %1000
             vels{itarget} = newVelocity(cpos,boundingBox,walkingSpeed);
         end
     end
+    
 
     % Get detections
     [dets,numDets,config] = rdg(targetin,t);
+    
     % Unpack dets
     %detsArray = [dets{:}];
 
@@ -142,11 +144,11 @@ for i = 1:100 %1000
         tracks = tracker(dets, t);
     end
 
-    % Update detections
-    plotDets(detscatter,dets);
-    drawnow;
+    % Update display
+    display(dets, tracks, targetin); % clusteredDets,   refImage
 
     t = t + scantime;
+    pause(0.2)
 end
 
 
@@ -208,32 +210,3 @@ function plotDets(detscatter,dets)
     set(detscatter,'XData',allx,'YData',ally);
 end
 
-function filter = initPeopleTrackingFilter(detection)
-% Create 3-D filter first
-filter3D = initcvekf(detection);
-
-% Create 2-D filter from the 3-D
-state = filter3D.State(1:4);
-stateCov = filter3D.StateCovariance(1:4,1:4);
-
-% Reduce uncertainty in cross range-rate to 5 m/s
-velCov = stateCov([2 4],[2 4]);
-[v, d] = eig(velCov);
-D = diag(d);
-D(2) = 1;
-stateCov([2 4],[2 4]) = v*diag(D)*v';
-
-% Process noise in a slowly changing environment
-Q = 0.25*eye(2);
-
-filter = trackingEKF(State = state,...
-    StateCovariance = stateCov,...
-    StateTransitionFcn = @constvel,...
-    StateTransitionJacobianFcn = @constveljac,...
-    HasAdditiveProcessNoise = false,...
-    MeasurementFcn = @cvmeas,...
-    MeasurementJacobianFcn = @cvmeasjac,...
-    ProcessNoise = Q,...
-    MeasurementNoise = detection.MeasurementNoise);
-
-end
