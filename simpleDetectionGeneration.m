@@ -1,56 +1,12 @@
-% Assume that we need to steering to 7 directions with the Phaser to get an
-% angle of arrival estimate. PRF is 1000 and 8 pulses are sent.
-fc = 10e9;
-bw = 500e6;
-prf = 1000;
-pri = 1/prf;
-npulse = 32;
-cpi = pri*npulse;
-nscans = 14;
-scantime = 2*cpi*nscans; % Estimate for "true" hardware scantime
+% Create a detection generator
+detectionGenerator = RdgDetectionGenerator();
 
-% Create our bounding box where our targets will move around.
-boundingBox = [0 30;-5 5];
-maxRange = sqrt(boundingBox(1,2)^2+boundingBox(2,2)^2);
-
-
-% Define targets walking around in our bounding box
-walkingSpeed = 2;
-rcs = 0.5;
-ntargets = 2;
-targets = cell(1,ntargets);
-vels = cell(1,ntargets);
-for i = 1:ntargets
-    targets{i} = phased.Platform(InitialPosition=randomPos(boundingBox),VelocitySource="Input port"); 
-    vels{i} = randomVel(walkingSpeed);
-end
-
-% Create radar model
-azres = 10;
-azbias = 0.5;
-far = 1e-4;
-rmax = sqrt(boundingBox(1,2)^2+boundingBox(2,2)^2);
-rres = bw2rangeres(bw);
-rrateres = dop2speed(prf/npulse,freq2wavelen(fc));
-rdg = radarDataGenerator(1,UpdateRate=1/scantime,ScanMode="No scanning",...
-    FieldOfView=[180 5],RangeLimits=[0 rmax],...
-    AzimuthResolution=azres,AzimuthBiasFraction=azbias,...
-    RangeResolution=bw2rangeres(bw),...
-    DetectionCoordinates="Sensor spherical",FalseAlarmRate=far,...
-    CenterFrequency=fc,Bandwidth=bw,HasRangeRate=true);
+% Create track generator
+trackGenerator = TrackGenerator();
 
 % Get Initial Position for Plot Initialization
-for itarget = 1:ntargets
-        % Get position and velocity
-        ctarget = targets{itarget};
-        cvel = vels{itarget};
-        cpos = ctarget(scantime,cvel);
+targetpos = detectionGenerator.targetPoses();
 
-        % Update target input
-        targetin(itarget) = struct('PlatformID',itarget, ...
-                                   'Position',cpos', ...
-                                   'Velocity',cvel');
-end
 % Reference Det for Plot Initialization
 refDet = objectDetection.empty();
 
@@ -61,152 +17,23 @@ display = HelperTIRadarTrackingDisplay('XLimits',[-10 40],...
     'CameraReferenceLines',zeros(2,0),...
     'RadarReferenceLines',zeros(2,0),...
     'PlotReferenceImage',0); % Turn off ref image
-display(refDet,objectTrack.empty(0,1),targetin);
+display(refDet,objectTrack.empty(0,1),targetpos);
 
-% Setup Tracker
-tracker = trackerJPDA(TrackLogic="Integrated");
-tracker.FilterInitializationFcn = @initPeopleTrackingFilter;
-
-% Further, specify clutter density, birth rate, and detection probability 
-% of the radar in the tracker. In this example, you use prior knowledge to
-%  calculate these numbers. The volume of the sensor in measurement space 
-% can be calculated using the measurement limits in each dimension. You 
-% assume that on average there 8 false alarms per step and 1 new target 
-% appearing in the field of view every 100 steps.
-% Volume of measurement space
-azSpan = 60;
-rSpan = 25;
-dopplerSpan = 5;
-V = azSpan*rSpan*dopplerSpan;
-
-% Number of false alarms per step
-nFalse = 8;
-
-% Number of new targets per step
-nNew = 0.01;
-
-% Probability of detecting the object
-Pd = 0.9;
-
-tracker.ClutterDensity = nFalse/V;
-tracker.NewTargetDensity = nNew/V;
-tracker.DetectionProbability = Pd;
-
-% Lastly, you specify the track management properties of the tracker to 
-% allow the tracker to discriminate between false and true objects and to 
-% create and delete tracks when they enter and exit the field of view, respectively.
-% Confirm a track with more than 95 percent
-% probability of existence
-tracker.ConfirmationThreshold = 0.95; 
-
-% Delete a track with less than 0.0001
-% probability of existence
-tracker.DeletionThreshold = 1e-4;
+% Init tracks
 tracks = objectTrack.empty(0,1);
 
-%% Create detections with measurement error
-t = 0;
-for i = 1:100 %1000
-    % Update targets
-    newpos = cell(1,ntargets);
-    targetin = struct(PlatformID=[],Position=[],Velocity=[]);
-    for itarget = 1:ntargets
-        % Get position and velocity
-        ctarget = targets{itarget};
-        cvel = vels{itarget};
-        cpos = ctarget(scantime,cvel);
-        
-        % Plot
-        %ctargetplot = targetpoints{itarget};
-        %plotTarget(ctargetplot,cpos);
+%% Track
 
-        % Update target input
-        targetin(itarget) = struct('PlatformID',itarget, ...
-                                   'Position',cpos', ...
-                                   'Velocity',cvel');
+for i = 1:100
+    % Generate detections
+    [dets,targets,t] = detectionGenerator.detect();
 
-        % Update velocity if currently out out bounds
-        if oob(cpos,boundingBox)
-            vels{itarget} = newVelocity(cpos,boundingBox,walkingSpeed);
-        end
-    end
-    
-
-    % Get detections
-    [dets,numDets,config] = rdg(targetin,t);
-    
-    % Unpack dets
-    %detsArray = [dets{:}];
-
-    % TODO: Track
-    % Track centroid returns
-    if isLocked(tracker) || ~isempty(dets)
-        tracks = tracker(dets, t);
-    end
+    % Generate tracks
+    tracks = trackGenerator.track(dets,t);
 
     % Update display
-    display(dets, tracks, targetin); % clusteredDets,   refImage
+    display(dets, tracks, targets); % clusteredDets,   refImage
 
-    t = t + scantime;
-    pause(0.2)
-end
-
-
-
-
-function pos = randomPos(boundingBox)
-    % Get a random position within the bounding box
-    xstart = boundingBox(1,1);
-    xend = boundingBox(1,2);
-    x = rand*(xend-xstart)+xstart;
-    ystart=boundingBox(2,1);
-    yend = boundingBox(2,2);
-    y = rand*(yend-ystart)+ystart;
-    pos = [x;y;0];
-end
-
-function vel = randomVel(speed)
-    % Get a random velocity at the given speed
-    velinit = [randn;randn;0];
-    vel = velinit/norm(velinit)*speed;
-end
-
-function flag = oob(pos,boundingBox)
-    % Check if a pos is oob
-    flag = pos(1) <= boundingBox(1,1) || pos(1) >= boundingBox(1,2) || pos(2) <= boundingBox(2,1) || pos(2) >= boundingBox(2,2);
-end
-
-function vel = newVelocity(pos,boundingBox,speed)
-    % Get a unit vector pointing to center
-    xstart = boundingBox(1,1);
-    xstop = boundingBox(1,2);
-    xspan = xstop-xstart;
-    xc = (xspan)/2+xstart;
-    ystart = boundingBox(2,1);
-    ystop = boundingBox(2,2);
-    yspan = ystop-ystart;
-    yc = (yspan)/2+ystart;
-    
-    % Point velocity towards center with some randomness
-    newvec = [(xc+randn*xspan/4)-pos(1);(yc+randn*yspan/4)-pos(2);0];
-    vel = newvec/norm(newvec)*speed;
-end
-
-function plotTarget(tscatter,pos)
-    set(tscatter,'XData',pos(1));
-    set(tscatter,'YData',pos(2));
-end
-
-function plotDets(detscatter,dets)
-    ndets = length(dets);
-    allx = zeros(1,ndets);
-    ally = zeros(1,ndets);
-    for idet = 1:ndets
-        r = dets{idet}.Measurement(2);
-        az = dets{idet}.Measurement(1);
-        allx(idet) = r*cosd(az);
-        ally(idet) = r*sind(az);
-    end
-    set(detscatter,'XData',allx,'YData',ally);
+    pause(0.4);
 end
 
